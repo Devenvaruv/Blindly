@@ -293,9 +293,6 @@ export const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
   },
-  summaryCard: {
-    gap: 16,
-  },
   avatar: {
     width: 62,
     height: 62,
@@ -318,14 +315,6 @@ export const styles = StyleSheet.create({
   revealedAvatarText: {
     color: theme.colors.success,
     fontSize: 38,
-  },
-  summaryText: {
-    gap: 6,
-  },
-  summaryTitle: {
-    color: theme.colors.ink,
-    fontSize: 26,
-    fontWeight: "600",
   },
   summaryCopy: {
     color: theme.colors.muted,

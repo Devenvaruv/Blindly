@@ -1,86 +1,167 @@
-const express = require("express");
+const { randomUUID } = require("crypto");
 const cors = require("cors");
 const dotenv = require("dotenv");
+const express = require("express");
+
+const { FALLBACK_ANSWER, getAppHelpAnswer } = require("./app-help");
 
 dotenv.config();
 
-const FALLBACK_ANSWER =
-  "The assistant is unavailable, but blind matches reveal only when both people agree.";
-
-const MOCK_MATCH = {
+const MATCH = {
   matchId: "match_001",
   compatibility: 87,
   anonymousLabel: "Blind Match",
   sharedIntent: "Intentional dating",
 };
 
-function extractAnswer(payload) {
-  if (typeof payload === "string" && payload.trim()) {
-    return payload.trim();
-  }
+const REVEALED_PROFILE = {
+  name: "Maya",
+  age: 25,
+  datingGoal: "Intentional dating",
+  personality: "Curious, calm, creative",
+};
 
-  if (!payload || typeof payload !== "object") {
-    return "";
-  }
+const STARTING_MESSAGES = [
+  {
+    id: "match-1",
+    sender: "match",
+    text: "Glad we get to talk first.",
+  },
+  {
+    id: "match-2",
+    sender: "match",
+    text: "How's your night going?",
+  },
+];
 
-  const directKeys = [
-    "answer",
-    "text",
-    "response",
-    "content",
-    "message",
-    "output_text",
-    "completion",
-  ];
+const AUTO_REPLIES = [
+  "Same here.",
+  "That sounds good to me.",
+  "I'm into that.",
+  "Nice. That feels easy.",
+];
 
-  for (const key of directKeys) {
-    if (typeof payload[key] === "string" && payload[key].trim()) {
-      return payload[key].trim();
-    }
-  }
+const sessions = new Map();
 
-  if (payload.data && typeof payload.data === "object") {
-    return extractAnswer(payload.data);
-  }
-
-  return "";
+function trimText(value, fallback = "") {
+  return typeof value === "string" ? value.trim() : fallback;
 }
 
-async function getAppHelpAnswer(message) {
-  const backendUrl = process.env.LLM_BACKEND_URL;
+function copyMessages() {
+  return STARTING_MESSAGES.map((message) => ({ ...message }));
+}
 
-  if (!backendUrl) {
-    return FALLBACK_ANSWER;
+function updateSessionTimers(session) {
+  const now = Date.now();
+
+  if (
+    session.matchStatus === "searching" &&
+    session.matchReadyAt &&
+    now >= session.matchReadyAt
+  ) {
+    session.matchStatus = "found";
+    session.matchReadyAt = null;
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  if (
+    session.revealStatus === "waiting" &&
+    session.revealReadyAt &&
+    now >= session.revealReadyAt
+  ) {
+    session.revealStatus = "revealed";
+    session.revealReadyAt = null;
 
-  try {
-    const response = await fetch(backendUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ message }),
-      signal: controller.signal,
-    });
+    const alreadyAdded = session.messages.some(
+      (message) => message.id === "system-reveal"
+    );
 
-    if (!response.ok) {
-      return FALLBACK_ANSWER;
+    if (!alreadyAdded) {
+      session.messages.push({
+        id: "system-reveal",
+        sender: "system",
+        text: "Reveal unlocked. You're chatting with Maya.",
+      });
     }
-
-    const contentType = response.headers.get("content-type") || "";
-    const payload = contentType.includes("application/json")
-      ? await response.json()
-      : await response.text();
-
-    return extractAnswer(payload) || FALLBACK_ANSWER;
-  } catch {
-    return FALLBACK_ANSWER;
-  } finally {
-    clearTimeout(timeout);
   }
+}
+
+function createSession(accountDetails = {}) {
+  const sessionId = `session_${randomUUID()}`;
+  const session = {
+    id: sessionId,
+    accountDetails: {
+      name: trimText(accountDetails.name),
+      age: trimText(accountDetails.age),
+    },
+    profileSetup: {
+      datingGoal: "",
+      preference: "",
+      personalityTraits: "",
+    },
+    scheduleDetails: {
+      place: "",
+      time: "",
+    },
+    match: { ...MATCH },
+    revealedProfile: { ...REVEALED_PROFILE },
+    messages: copyMessages(),
+    matchStatus: "idle",
+    matchReadyAt: null,
+    revealStatus: "idle",
+    revealReadyAt: null,
+    replyIndex: 0,
+  };
+
+  sessions.set(sessionId, session);
+  return session;
+}
+
+function getSession(sessionId) {
+  const session = sessions.get(sessionId);
+
+  if (!session) {
+    return null;
+  }
+
+  updateSessionTimers(session);
+  return session;
+}
+
+function getChatState(session) {
+  updateSessionTimers(session);
+
+  return {
+    match: session.match,
+    scheduleDetails: session.scheduleDetails,
+    messages: session.messages,
+    isMatchRevealed: session.revealStatus === "revealed",
+    revealedProfile:
+      session.revealStatus === "revealed" ? session.revealedProfile : null,
+  };
+}
+
+function getRevealState(session) {
+  updateSessionTimers(session);
+
+  return {
+    status: session.revealStatus,
+    messages: session.messages,
+    isMatchRevealed: session.revealStatus === "revealed",
+    revealedProfile:
+      session.revealStatus === "revealed" ? session.revealedProfile : null,
+  };
+}
+
+function requireSession(req, res, next) {
+  const session = getSession(req.params.sessionId);
+
+  if (!session) {
+    res.status(404).json({ error: "Session not found" });
+    return;
+  }
+
+  req.session = session;
+  next();
 }
 
 function createApp() {
@@ -93,20 +174,151 @@ function createApp() {
     res.json({ status: "ok" });
   });
 
-  app.post("/api/mock-match", (_req, res) => {
-    res.json(MOCK_MATCH);
+  app.post("/api/session", (req, res) => {
+    const session = createSession(req.body?.accountDetails);
+
+    res.status(201).json({
+      sessionId: session.id,
+      accountDetails: session.accountDetails,
+    });
   });
 
+  app.patch("/api/session/:sessionId/profile", requireSession, (req, res) => {
+    const profileSetup = req.body?.profileSetup || {};
+
+    req.session.profileSetup = {
+      datingGoal: trimText(
+        profileSetup.datingGoal,
+        req.session.profileSetup.datingGoal
+      ),
+      preference: trimText(
+        profileSetup.preference,
+        req.session.profileSetup.preference
+      ),
+      personalityTraits: trimText(
+        profileSetup.personalityTraits,
+        req.session.profileSetup.personalityTraits
+      ),
+    };
+
+    res.json({ profileSetup: req.session.profileSetup });
+  });
+
+  app.patch("/api/session/:sessionId/schedule", requireSession, (req, res) => {
+    const scheduleDetails = req.body?.scheduleDetails || {};
+
+    req.session.scheduleDetails = {
+      place: trimText(scheduleDetails.place, req.session.scheduleDetails.place),
+      time: trimText(scheduleDetails.time, req.session.scheduleDetails.time),
+    };
+    req.session.messages = copyMessages();
+    req.session.replyIndex = 0;
+    req.session.matchStatus = "searching";
+    req.session.matchReadyAt = Date.now() + 2400;
+    req.session.revealStatus = "idle";
+    req.session.revealReadyAt = null;
+
+    res.json({
+      status: req.session.matchStatus,
+      scheduleDetails: req.session.scheduleDetails,
+    });
+  });
+
+  app.get("/api/session/:sessionId/match-status", requireSession, (req, res) => {
+    updateSessionTimers(req.session);
+
+    res.json({
+      status: req.session.matchStatus,
+      match: req.session.matchStatus === "found" ? req.session.match : null,
+      scheduleDetails: req.session.scheduleDetails,
+    });
+  });
+
+  app.post("/api/session/:sessionId/match/join", requireSession, (req, res) => {
+    updateSessionTimers(req.session);
+
+    if (
+      req.session.matchStatus !== "found" &&
+      req.session.matchStatus !== "joined"
+    ) {
+      res.status(409).json({ error: "Match is not ready" });
+      return;
+    }
+
+    req.session.matchStatus = "joined";
+    res.json(getChatState(req.session));
+  });
+
+  app.post(
+    "/api/session/:sessionId/match/ignore",
+    requireSession,
+    (req, res) => {
+      req.session.matchStatus = "idle";
+      req.session.matchReadyAt = null;
+
+      res.json({ status: "ignored" });
+    }
+  );
+
+  app.post(
+    "/api/session/:sessionId/chat/messages",
+    requireSession,
+    (req, res) => {
+      const text = trimText(req.body?.text);
+
+      if (!text) {
+        res.status(400).json({ error: "Message text is required" });
+        return;
+      }
+
+      const timestamp = Date.now();
+
+      req.session.messages.push({
+        id: `user-${timestamp}`,
+        sender: "user",
+        text,
+      });
+
+      req.session.messages.push({
+        id: `match-${timestamp}-${req.session.replyIndex}`,
+        sender: "match",
+        text: AUTO_REPLIES[req.session.replyIndex % AUTO_REPLIES.length],
+      });
+
+      req.session.replyIndex += 1;
+      res.json(getChatState(req.session));
+    }
+  );
+
+  app.post(
+    "/api/session/:sessionId/reveal-request",
+    requireSession,
+    (req, res) => {
+      req.session.revealStatus = "waiting";
+      req.session.revealReadyAt = Date.now() + 1000;
+
+      res.json({ status: req.session.revealStatus });
+    }
+  );
+
+  app.get(
+    "/api/session/:sessionId/reveal-status",
+    requireSession,
+    (req, res) => {
+      res.json(getRevealState(req.session));
+    }
+  );
+
   app.post("/api/app-help", async (req, res) => {
-    const message =
-      typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    const message = trimText(req.body?.message);
 
     if (!message) {
-      return res.json({ answer: FALLBACK_ANSWER });
+      res.json({ answer: FALLBACK_ANSWER });
+      return;
     }
 
     const answer = await getAppHelpAnswer(message);
-    return res.json({ answer });
+    res.json({ answer });
   });
 
   return app;

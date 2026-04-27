@@ -21,7 +21,9 @@ The mobile app is built with Expo React Native. The backend is a small Express A
 [Expo React Native App]
         |
         | POST /api/app-help
-        | POST /api/mock-match
+        | POST /api/session
+        | GET /api/session/:id/match-status
+        | POST /api/session/:id/chat/messages
         v
 [Express Backend on EC2]
         |

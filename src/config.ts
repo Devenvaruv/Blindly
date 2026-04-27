@@ -1,3 +1,5 @@
+import appConstants from "../shared/app-constants.json";
+
 type RuntimeEnv = {
   process?: {
     env?: Record<string, string | undefined>;
@@ -19,5 +21,4 @@ const normalizeApiUrl = (value: string | undefined) => {
 
 export const API_URL = normalizeApiUrl(runtimeEnv?.EXPO_PUBLIC_API_URL);
 
-export const APP_HELP_FALLBACK =
-  "The assistant is unavailable, but blind matches reveal only when both people agree.";
+export const APP_HELP_FALLBACK = appConstants.assistantFallback;
