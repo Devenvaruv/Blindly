@@ -33,7 +33,7 @@ Simple EC2 deployment for the Blindly Express backend.
 cd infra
 terraform init
 terraform apply `
-  -var "app_repo_url=https://github.com/your-org/your-repo.git" `
+  -var "app_repo_url=https://github.com/Devenvaruv/Blindly.git" `
   -var "app_repo_branch=main" `
   -var "backend_subdir=backend" `
   -var "llm_backend_url=https://your-existing-llm-backend.com/chat" `
@@ -44,9 +44,3 @@ terraform apply `
 
 - `public_ip`
 - `api_base_url`
-
-## Notes
-
-- The EC2 instance clones the repo directly in `user_data`, so the repo needs to be reachable from the instance.
-- If you want SSH access, provide an existing AWS key pair name through `key_name`.
-- This is intentionally demo-grade: no HTTPS, no load balancer, no autoscaling, no Docker, no CI/CD.

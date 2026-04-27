@@ -89,7 +89,7 @@ terraform init
 
 ```powershell
 terraform apply `
-  -var "app_repo_url=https://github.com/your-org/your-repo.git" `
+  -var "app_repo_url=app_repo_url=https://github.com/Devenvaruv/Blindly.git" `
   -var "app_repo_branch=main" `
   -var "backend_subdir=backend" `
   -var "llm_backend_url=https://your-existing-llm-backend.com/chat" `
