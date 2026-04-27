@@ -25,7 +25,15 @@ yarn-debug.*
 yarn-error.*
 
 # local env files
+.env
 .env*.local
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+terraform.tfvars.json
 
 # typescript
 *.tsbuildinfo
