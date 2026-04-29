@@ -6,12 +6,18 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "check": "node --check src/server.js"
+    "worker": "node src/temporal-worker.js",
+    "worker:dev": "node --watch src/temporal-worker.js",
+    "check": "node --check src/server.js && node --check src/temporal.js && node --check src/temporal-worker.js && node --check src/temporal-workflows.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
+    "@temporalio/client": "^1.16.1",
+    "@temporalio/common": "^1.16.1",
+    "@temporalio/worker": "^1.16.1",
+    "@temporalio/workflow": "^1.16.1",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^5.1.0"

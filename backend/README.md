@@ -22,7 +22,9 @@ Small Express API for the Blindly MVP.
 2. `npm install`
 3. Copy `.env.example` to `.env`
 4. Set `LLM_BACKEND_URL` if you have an existing LLM backend
-5. Run `npm start`
+5. Start a local Temporal server
+6. Run the Temporal worker
+7. Run `npm start`
 
 Default local URL: `http://localhost:3000`
 
@@ -31,6 +33,31 @@ Default local URL: `http://localhost:3000`
 ```env
 PORT=3000
 LLM_BACKEND_URL=https://your-existing-llm-backend.com/chat
+TEMPORAL_ADDRESS=127.0.0.1:7233
+TEMPORAL_NAMESPACE=default
+TEMPORAL_TASK_QUEUE=blind-date-task-queue
+```
+
+## Local Temporal
+
+Start the Temporal dev server in one terminal:
+
+```bash
+temporal server start-dev
+```
+
+Then start the worker in another terminal:
+
+```bash
+cd backend
+npm run worker
+```
+
+Then start the API:
+
+```bash
+cd backend
+npm start
 ```
 
 ## Placeholder Behavior
@@ -39,8 +66,8 @@ LLM_BACKEND_URL=https://your-existing-llm-backend.com/chat
 - No auth
 - No WebSockets
 - All session state is stored in memory
-- Match availability is simulated on the server
-- Reveal timing is simulated on the server
+- Match timing runs in a Temporal workflow
+- Reveal timing runs in a Temporal workflow
 - Chat messages are stored in memory and get placeholder replies
 
 ## Example Flow
@@ -59,3 +86,4 @@ LLM_BACKEND_URL=https://your-existing-llm-backend.com/chat
 - `POST /api/app-help` forwards `{ "message": "..." }` to `LLM_BACKEND_URL`.
 - If `LLM_BACKEND_URL` is missing or the request fails, the API returns a fallback answer instead of erroring.
 - In-memory sessions reset when the backend restarts.
+- If Temporal is not running, the match and reveal routes return `503`.

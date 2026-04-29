@@ -4,6 +4,16 @@ const dotenv = require("dotenv");
 const express = require("express");
 
 const { FALLBACK_ANSWER, getAppHelpAnswer } = require("./app-help");
+const {
+  BLIND_DATE_QUERY,
+  BLIND_DATE_WORKFLOW,
+  IGNORE_MATCH_SIGNAL,
+  JOIN_MATCH_SIGNAL,
+  REQUEST_REVEAL_SIGNAL,
+  TEMPORAL_TASK_QUEUE,
+  createWorkflowId,
+  getTemporalClient,
+} = require("./temporal");
 
 dotenv.config();
 
@@ -51,40 +61,6 @@ function copyMessages() {
   return STARTING_MESSAGES.map((message) => ({ ...message }));
 }
 
-function updateSessionTimers(session) {
-  const now = Date.now();
-
-  if (
-    session.matchStatus === "searching" &&
-    session.matchReadyAt &&
-    now >= session.matchReadyAt
-  ) {
-    session.matchStatus = "found";
-    session.matchReadyAt = null;
-  }
-
-  if (
-    session.revealStatus === "waiting" &&
-    session.revealReadyAt &&
-    now >= session.revealReadyAt
-  ) {
-    session.revealStatus = "revealed";
-    session.revealReadyAt = null;
-
-    const alreadyAdded = session.messages.some(
-      (message) => message.id === "system-reveal"
-    );
-
-    if (!alreadyAdded) {
-      session.messages.push({
-        id: "system-reveal",
-        sender: "system",
-        text: "Reveal unlocked. You're chatting with Maya.",
-      });
-    }
-  }
-}
-
 function createSession(accountDetails = {}) {
   const sessionId = `session_${randomUUID()}`;
   const session = {
@@ -105,10 +81,7 @@ function createSession(accountDetails = {}) {
     match: { ...MATCH },
     revealedProfile: { ...REVEALED_PROFILE },
     messages: copyMessages(),
-    matchStatus: "idle",
-    matchReadyAt: null,
-    revealStatus: "idle",
-    revealReadyAt: null,
+    workflowId: "",
     replyIndex: 0,
   };
 
@@ -117,39 +90,7 @@ function createSession(accountDetails = {}) {
 }
 
 function getSession(sessionId) {
-  const session = sessions.get(sessionId);
-
-  if (!session) {
-    return null;
-  }
-
-  updateSessionTimers(session);
-  return session;
-}
-
-function getChatState(session) {
-  updateSessionTimers(session);
-
-  return {
-    match: session.match,
-    scheduleDetails: session.scheduleDetails,
-    messages: session.messages,
-    isMatchRevealed: session.revealStatus === "revealed",
-    revealedProfile:
-      session.revealStatus === "revealed" ? session.revealedProfile : null,
-  };
-}
-
-function getRevealState(session) {
-  updateSessionTimers(session);
-
-  return {
-    status: session.revealStatus,
-    messages: session.messages,
-    isMatchRevealed: session.revealStatus === "revealed",
-    revealedProfile:
-      session.revealStatus === "revealed" ? session.revealedProfile : null,
-  };
+  return sessions.get(sessionId) || null;
 }
 
 function requireSession(req, res, next) {
@@ -162,6 +103,98 @@ function requireSession(req, res, next) {
 
   req.session = session;
   next();
+}
+
+function getChatState(session, blindDateState) {
+  return {
+    match: blindDateState && blindDateState.match ? blindDateState.match : null,
+    scheduleDetails: session.scheduleDetails,
+    messages: session.messages,
+    isMatchRevealed: blindDateState
+      ? blindDateState.revealStatus === "revealed"
+      : false,
+    revealedProfile:
+      blindDateState && blindDateState.revealStatus === "revealed"
+        ? blindDateState.revealedProfile
+        : null,
+  };
+}
+
+function getRevealState(session, blindDateState) {
+  return {
+    status: blindDateState ? blindDateState.revealStatus : "idle",
+    messages: session.messages,
+    isMatchRevealed: blindDateState
+      ? blindDateState.revealStatus === "revealed"
+      : false,
+    revealedProfile:
+      blindDateState && blindDateState.revealStatus === "revealed"
+        ? blindDateState.revealedProfile
+        : null,
+  };
+}
+
+async function getBlindDateState(session) {
+  if (!session.workflowId) {
+    return {
+      status: "idle",
+      match: null,
+      revealStatus: "idle",
+      revealedProfile: null,
+    };
+  }
+
+  const client = await getTemporalClient();
+  const handle = client.workflow.getHandle(session.workflowId);
+
+  return handle.query(BLIND_DATE_QUERY);
+}
+
+async function startBlindDateWorkflow(session) {
+  const client = await getTemporalClient();
+
+  if (session.workflowId) {
+    try {
+      const oldHandle = client.workflow.getHandle(session.workflowId);
+      await oldHandle.signal(IGNORE_MATCH_SIGNAL);
+    } catch {
+      // Ignore old workflow cleanup errors when replacing a schedule.
+    }
+  }
+
+  const workflowId = createWorkflowId(session.id);
+
+  await client.workflow.start(BLIND_DATE_WORKFLOW, {
+    workflowId,
+    taskQueue: TEMPORAL_TASK_QUEUE,
+    args: [
+      {
+        scheduleDetails: session.scheduleDetails,
+        match: session.match,
+        revealedProfile: session.revealedProfile,
+      },
+    ],
+  });
+
+  session.workflowId = workflowId;
+}
+
+async function signalBlindDateWorkflow(session, signalName) {
+  if (!session.workflowId) {
+    return;
+  }
+
+  const client = await getTemporalClient();
+  const handle = client.workflow.getHandle(session.workflowId);
+  await handle.signal(signalName);
+}
+
+function sendTemporalError(res, error) {
+  console.error("Temporal request failed");
+  console.error(error);
+  res.status(503).json({
+    error: "Temporal is not available. Start the Temporal server and worker.",
+  });
 }
 
 function createApp() {
@@ -204,58 +237,90 @@ function createApp() {
     res.json({ profileSetup: req.session.profileSetup });
   });
 
-  app.patch("/api/session/:sessionId/schedule", requireSession, (req, res) => {
-    const scheduleDetails = req.body?.scheduleDetails || {};
+  app.patch(
+    "/api/session/:sessionId/schedule",
+    requireSession,
+    async (req, res) => {
+      const scheduleDetails = req.body?.scheduleDetails || {};
 
-    req.session.scheduleDetails = {
-      place: trimText(scheduleDetails.place, req.session.scheduleDetails.place),
-      time: trimText(scheduleDetails.time, req.session.scheduleDetails.time),
-    };
-    req.session.messages = copyMessages();
-    req.session.replyIndex = 0;
-    req.session.matchStatus = "searching";
-    req.session.matchReadyAt = Date.now() + 2400;
-    req.session.revealStatus = "idle";
-    req.session.revealReadyAt = null;
+      req.session.scheduleDetails = {
+        place: trimText(
+          scheduleDetails.place,
+          req.session.scheduleDetails.place
+        ),
+        time: trimText(scheduleDetails.time, req.session.scheduleDetails.time),
+      };
+      req.session.messages = copyMessages();
+      req.session.replyIndex = 0;
 
-    res.json({
-      status: req.session.matchStatus,
-      scheduleDetails: req.session.scheduleDetails,
-    });
-  });
+      try {
+        await startBlindDateWorkflow(req.session);
 
-  app.get("/api/session/:sessionId/match-status", requireSession, (req, res) => {
-    updateSessionTimers(req.session);
-
-    res.json({
-      status: req.session.matchStatus,
-      match: req.session.matchStatus === "found" ? req.session.match : null,
-      scheduleDetails: req.session.scheduleDetails,
-    });
-  });
-
-  app.post("/api/session/:sessionId/match/join", requireSession, (req, res) => {
-    updateSessionTimers(req.session);
-
-    if (
-      req.session.matchStatus !== "found" &&
-      req.session.matchStatus !== "joined"
-    ) {
-      res.status(409).json({ error: "Match is not ready" });
-      return;
+        res.json({
+          status: "searching",
+          scheduleDetails: req.session.scheduleDetails,
+        });
+      } catch (error) {
+        sendTemporalError(res, error);
+      }
     }
+  );
 
-    req.session.matchStatus = "joined";
-    res.json(getChatState(req.session));
-  });
+  app.get(
+    "/api/session/:sessionId/match-status",
+    requireSession,
+    async (req, res) => {
+      try {
+        const blindDateState = await getBlindDateState(req.session);
+
+        res.json({
+          status: blindDateState.status,
+          match: blindDateState.match,
+          scheduleDetails: req.session.scheduleDetails,
+        });
+      } catch (error) {
+        sendTemporalError(res, error);
+      }
+    }
+  );
+
+  app.post(
+    "/api/session/:sessionId/match/join",
+    requireSession,
+    async (req, res) => {
+      try {
+        const blindDateState = await getBlindDateState(req.session);
+
+        if (
+          blindDateState.status !== "found" &&
+          blindDateState.status !== "joined"
+        ) {
+          res.status(409).json({ error: "Match is not ready" });
+          return;
+        }
+
+        await signalBlindDateWorkflow(req.session, JOIN_MATCH_SIGNAL);
+        const nextBlindDateState = await getBlindDateState(req.session);
+
+        res.json(getChatState(req.session, nextBlindDateState));
+      } catch (error) {
+        sendTemporalError(res, error);
+      }
+    }
+  );
 
   app.post(
     "/api/session/:sessionId/match/ignore",
     requireSession,
-    (req, res) => {
-      req.session.matchStatus = "idle";
-      req.session.matchReadyAt = null;
+    async (req, res) => {
+      try {
+        await signalBlindDateWorkflow(req.session, IGNORE_MATCH_SIGNAL);
+      } catch (error) {
+        sendTemporalError(res, error);
+        return;
+      }
 
+      req.session.workflowId = "";
       res.json({ status: "ignored" });
     }
   );
@@ -263,7 +328,7 @@ function createApp() {
   app.post(
     "/api/session/:sessionId/chat/messages",
     requireSession,
-    (req, res) => {
+    async (req, res) => {
       const text = trimText(req.body?.text);
 
       if (!text) {
@@ -286,26 +351,46 @@ function createApp() {
       });
 
       req.session.replyIndex += 1;
-      res.json(getChatState(req.session));
+
+      try {
+        const blindDateState = await getBlindDateState(req.session);
+        res.json(getChatState(req.session, blindDateState));
+      } catch (error) {
+        sendTemporalError(res, error);
+      }
     }
   );
 
   app.post(
     "/api/session/:sessionId/reveal-request",
     requireSession,
-    (req, res) => {
-      req.session.revealStatus = "waiting";
-      req.session.revealReadyAt = Date.now() + 1000;
+    async (req, res) => {
+      try {
+        const blindDateState = await getBlindDateState(req.session);
 
-      res.json({ status: req.session.revealStatus });
+        if (blindDateState.status !== "joined") {
+          res.status(409).json({ error: "Match is not ready for reveal" });
+          return;
+        }
+
+        await signalBlindDateWorkflow(req.session, REQUEST_REVEAL_SIGNAL);
+        res.json({ status: "waiting" });
+      } catch (error) {
+        sendTemporalError(res, error);
+      }
     }
   );
 
   app.get(
     "/api/session/:sessionId/reveal-status",
     requireSession,
-    (req, res) => {
-      res.json(getRevealState(req.session));
+    async (req, res) => {
+      try {
+        const blindDateState = await getBlindDateState(req.session);
+        res.json(getRevealState(req.session, blindDateState));
+      } catch (error) {
+        sendTemporalError(res, error);
+      }
     }
   );
 

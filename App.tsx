@@ -50,6 +50,7 @@ const defaultScheduleDetails: ScheduleDetails = {
 
 async function getJson(path: string) {
   if (!API_URL) {
+    console.warn(`Missing API URL for GET ${path}`);
     return null;
   }
 
@@ -57,17 +58,21 @@ async function getJson(path: string) {
     const response = await fetch(`${API_URL}${path}`);
 
     if (!response.ok) {
+      console.warn(`GET ${path} failed with status ${response.status}`);
       return null;
     }
 
     return await response.json();
-  } catch {
+  } catch (error) {
+    console.error(`GET ${path} failed`);
+    console.error(error);
     return null;
   }
 }
 
 async function sendJson(path: string, method: "POST" | "PATCH", body?: unknown) {
   if (!API_URL) {
+    console.warn(`Missing API URL for ${method} ${path}`);
     return null;
   }
 
@@ -81,11 +86,14 @@ async function sendJson(path: string, method: "POST" | "PATCH", body?: unknown) 
     });
 
     if (!response.ok) {
+      console.warn(`${method} ${path} failed with status ${response.status}`);
       return null;
     }
 
     return await response.json();
-  } catch {
+  } catch (error) {
+    console.error(`${method} ${path} failed`);
+    console.error(error);
     return null;
   }
 }

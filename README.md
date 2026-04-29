@@ -4,7 +4,7 @@ Blindly is a dating MVP centered on one flow:
 
 scheduled blind match -> popup -> anonymous chat -> mutual reveal
 
-The mobile app is built with Expo React Native. The backend is a small Express API. Deployment is a single EC2 instance provisioned with Terraform.
+The mobile app is built with Expo React Native. The backend is a small Express API with Temporal used for match and reveal timing. Deployment is a single EC2 instance provisioned with Terraform.
 
 ## What the app does
 
@@ -26,6 +26,14 @@ The mobile app is built with Expo React Native. The backend is a small Express A
         | POST /api/session/:id/chat/messages
         v
 [Express Backend on EC2]
+        |
+        | start / signal / query
+        v
+[Temporal Server + Worker]
+        |
+        | durable timers for match + reveal
+        v
+[Blind Match Workflow]
         |
         | POST message
         v
@@ -63,7 +71,22 @@ npm install
 
 2. Create a local env file from `backend/.env.example`.
 
-3. Start the API:
+3. Start a local Temporal dev server.
+
+The official samples use:
+
+```bash
+temporal server start-dev
+```
+
+4. Start the Temporal worker:
+
+```powershell
+cd backend
+npm run worker
+```
+
+5. Start the API:
 
 ```powershell
 npm start
