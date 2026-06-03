@@ -1,6 +1,6 @@
-# Blindly MVP
+# Blindly
 
-Blindly is a dating MVP centered on one flow:
+Blindly is a dating app centered on one flow:
 
 scheduled blind match -> popup -> anonymous chat -> mutual reveal
 
@@ -8,12 +8,12 @@ The mobile app is built with Expo React Native. The backend is a small Express A
 
 ## What the app does
 
-- Lets a user create a lightweight profile
+- Lets a user create a profile
 - Captures a preferred time and place
 - Simulates a blind match at that scheduled slot
 - Opens an anonymous chat
 - Lets both people reveal only after agreement
-- Includes one app-help endpoint backed by an existing LLM URL
+- Includes one a endpoint backed by an existing LLM URL
 
 ## Architecture
 
@@ -109,12 +109,3 @@ terraform apply `
 - Production HTTPS and domain setup
 - Load balancer, autoscaling, RDS, Docker, CI/CD
 - Analytics, moderation, and abuse prevention
-
-## What I would build next
-
-- Real auth and user accounts
-- Persistent chat and profile storage
-- Match lifecycle state in a database
-- Scheduled notifications and actual reveal coordination
-- Safer deployment with HTTPS, secrets management, and CI/CD
-- Better app assistant contract with a stable upstream LLM schema
