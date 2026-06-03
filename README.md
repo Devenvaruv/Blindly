@@ -1,5 +1,10 @@
 # Blindly
 
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/bb3cb308-ad75-4f31-a182-d1e1c6ad5ebc" 
+         width="800" controls>
+  </video>
+</div>
 Blindly is a dating app centered on one flow:
 
 scheduled blind match -> popup -> anonymous chat -> mutual reveal
